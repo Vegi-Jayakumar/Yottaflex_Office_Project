@@ -1,4 +1,8 @@
 import csv, json
+import sqlite3
+from collections import Counter
+import pytest
+from pipeline.core import _reconcile_output
 from pathlib import Path
 from pipeline.core import PipelineConfig, run_pipeline
 
@@ -17,6 +21,9 @@ def test_happy_path_and_idempotent_rerun(tmp_path):
     with (tmp_path/"out"/first["run_id"]/"orders.csv").open() as f:
         row = next(csv.DictReader(f))
     assert row["amount"] == "12.50" and row["currency"] == "USD"
+    assert row["run_id"] == first["run_id"] and row["source_file"] == source.name
+    assert first["reconciliation"]["status"] == "passed"
+    assert first["reconciliation"]["published_rows_checked"] == 1
 
 def test_empty_input(tmp_path):
     customers=tmp_path/"c.csv"; write_customers(customers)
@@ -54,3 +61,16 @@ def test_missing_schema_field_rejected(tmp_path):
     source=tmp_path/"rows.jsonl"; source.write_text('{"order_id":"O1"}\n', encoding="utf-8")
     result=run_pipeline(PipelineConfig(source,customers,tmp_path/"out"))
     assert result["rejected_rows"] == 1
+
+def test_reconciliation_fails_on_aggregate_mismatch(tmp_path):
+    output = tmp_path/"orders.csv"
+    output.write_text("order_id,customer_id,order_ts,amount,currency,status,run_id,source_file,source_row\n"
+                      "O1,C1,2025-01-01T00:00:00Z,10.00,USD,paid,R1,orders.csv,2\n", encoding="utf-8")
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE seen (order_id TEXT PRIMARY KEY)")
+    db.execute("INSERT INTO seen VALUES ('O1')")
+    counts = Counter(input_rows=1, output_rows=1, rejected_rows=0)
+    with pytest.raises(RuntimeError, match="status aggregate reconciliation failed"):
+        _reconcile_output(output, db, counts, Counter(), Counter(USD=__import__("decimal").Decimal("10.00")), "R1", "orders.csv")
+    db.close()
+

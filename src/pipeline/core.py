@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterator, Mapping, Any
-OUTPUT_FIELDS = ["order_id", "customer_id", "order_ts", "amount", "currency", "status", "source_file", "source_row"]
+OUTPUT_FIELDS = ["order_id", "customer_id", "order_ts", "amount", "currency", "status", "run_id", "source_file", "source_row"]
 REQUIRED = {"order_id", "customer_id", "order_ts", "amount", "currency", "status"}
 ALLOWED_STATUS = {"created", "paid", "shipped", "cancelled"}
 CURRENCY = {"USD", "EUR", "GBP", "INR"}
@@ -103,10 +103,11 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                     except sqlite3.IntegrityError: error = "duplicate_order_id"
                 if error or not normalized:
                     _write_reject(reject_file, source, row_num, raw, error or "invalid_record"); counts["rejected_rows"] += 1; continue
-                normalized.update(source_file=source.name, source_row=str(row_num)); writer.writerow(normalized)
+                normalized.update(run_id=run_id, source_file=source.name, source_row=str(row_num)); writer.writerow(normalized)
                 counts["output_rows"] += 1; status_counts[normalized["status"]] += 1
                 amount_totals[normalized["currency"]] += Decimal(normalized["amount"])
         db.commit()
+        reconciliation = _reconcile_output(staging / "orders.csv", db, counts, status_counts, amount_totals, run_id, source.name)
         db.close()
         # SQLite is an internal scratch index, not part of the published dataset.
         (staging / "seen.sqlite").unlink(missing_ok=True)
@@ -114,7 +115,7 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
         report = {"run_id": run_id, "status": "success", "source_file": source.name, "input_sha256": _sha256(source),
           "started_at": started.isoformat(), "ended_at": ended.isoformat(), "duration_seconds": round(time.perf_counter()-timer, 6),
           "chunk_size": config.chunk_size, **dict(counts), "distinct_customers_loaded": len(customers),
-          "status_counts": dict(sorted(status_counts.items())), "amount_totals_by_currency": {k:f"{v:.2f}" for k,v in sorted(amount_totals.items())}, "failure_reason": None}
+          "status_counts": dict(sorted(status_counts.items())), "amount_totals_by_currency": {k:f"{v:.2f}" for k,v in sorted(amount_totals.items())}, "reconciliation": reconciliation, "failure_reason": None}
         (staging / "run_report.json").write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
         if final_dir.exists(): shutil.rmtree(final_dir)
         os.replace(staging, final_dir)
@@ -126,8 +127,40 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
     finally:
         if staging.exists(): shutil.rmtree(staging, ignore_errors=True)
 
+
+def _reconcile_output(path: Path, db: sqlite3.Connection, counts: Counter, expected_status: Counter,
+                      expected_amounts: Counter, run_id: str, source_file: str) -> dict[str, Any]:
+    """Read the staged target back incrementally and verify counts, keys, lineage, and aggregates."""
+    actual_count = 0
+    status_counts: Counter = Counter()
+    amount_totals: Counter = Counter()
+    previous_order_id = None
+    with path.open("r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            actual_count += 1
+            if row["run_id"] != run_id or row["source_file"] != source_file:
+                raise RuntimeError("output lineage reconciliation failed")
+            status_counts[row["status"]] += 1
+            amount_totals[row["currency"]] += Decimal(row["amount"])
+    unique_key_count = db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
+    expected_totals = {key: f"{value:.2f}" for key, value in sorted(expected_amounts.items())}
+    actual_totals = {key: f"{value:.2f}" for key, value in sorted(amount_totals.items())}
+    if counts["input_rows"] != counts["output_rows"] + counts["rejected_rows"]:
+        raise RuntimeError("source-to-target count reconciliation failed")
+    if actual_count != counts["output_rows"] or unique_key_count != actual_count:
+        raise RuntimeError("output row count or primary-key reconciliation failed")
+    if dict(sorted(status_counts.items())) != dict(sorted(expected_status.items())):
+        raise RuntimeError("status aggregate reconciliation failed")
+    if actual_totals != expected_totals:
+        raise RuntimeError("amount aggregate reconciliation failed")
+    return {"status": "passed", "input_equals_output_plus_rejects": True,
+            "published_rows_match_report": True, "published_keys_unique": True,
+            "status_counts_match": True, "amount_totals_match": True,
+            "published_rows_checked": actual_count}
 def _write_reject(file, source: Path, row_num: int, raw: Mapping[str, Any] | None, reason: str) -> None:
     file.write(json.dumps({"source_file":source.name,"source_row":row_num,"reason":reason,"record":raw},ensure_ascii=False)+"\n")
+
+
 
 
 

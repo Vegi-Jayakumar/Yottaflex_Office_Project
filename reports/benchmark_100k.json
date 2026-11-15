@@ -3,9 +3,9 @@
   "status": "success",
   "source_file": "workload.csv",
   "input_sha256": "3bcb07172d3716c35ff54d02586abc2afb87c07a7a36725a1094def982f47a8a",
-  "started_at": "2026-11-15T08:25:27.523909+00:00",
-  "ended_at": "2026-11-15T08:25:30.890786+00:00",
-  "duration_seconds": 3.367297,
+  "started_at": "2026-11-15T08:49:14.562297+00:00",
+  "ended_at": "2026-11-15T08:49:18.412608+00:00",
+  "duration_seconds": 3.856468,
   "chunk_size": 1000,
   "input_rows": 100000,
   "parsed_rows": 100000,
@@ -23,6 +23,15 @@
     "GBP": "61953977.42",
     "INR": "61463124.44",
     "USD": "61571628.19"
+  },
+  "reconciliation": {
+    "status": "passed",
+    "input_equals_output_plus_rejects": true,
+    "published_rows_match_report": true,
+    "published_keys_unique": true,
+    "status_counts_match": true,
+    "amount_totals_match": true,
+    "published_rows_checked": 100000
   },
   "failure_reason": null
 }

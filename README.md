@@ -66,7 +66,7 @@ The run key derives from input content, so retrying the same file maps to the sa
 
 ## Reconciliation and performance
 
-The report reconciles `input_rows = output_rows + rejected_rows`; `parsed_rows` excludes malformed JSONL lines. It also records valid-row counts by status and amount totals by currency, plus duration. Use the stable order key to check output uniqueness and independently sum amounts by currency. `reports/sample_run/` contains one captured execution report and output from the starter fixture.
+Before publishing, the pipeline reads the staged target back incrementally and verifies `input_rows = output_rows + rejected_rows`, output row count, primary-key uniqueness, `run_id` / `source_file` lineage, status counts, and amount totals by currency. The report records the reconciliation result; `parsed_rows` excludes malformed JSONL lines. Tests cover both successful reconciliation and a deliberately mismatched aggregate. `reports/sample_run/` contains one captured execution report and output from the starter fixture.
 
 The included generator uses a fixed seed and creates dates in shuffled order; amount zero is valid and exercises a boundary. For throughput comparisons, time runs with different `--chunk-size` settings while keeping the same input and output path; the core path is record-streaming with a bounded working set. One reasonable future optimization for larger source files is bulk committing the temporary SQLite key index (e.g. every N rows), then benchmarking the memory/disk trade-off. This sample favors clear error lineage over maximum throughput.
 
@@ -75,5 +75,6 @@ The included generator uses a fixed seed and creates dates in shuffled order; am
 Tests cover normal output, empty input, malformed JSONL, missing schema, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, and deterministic generation. The sample contains labeled invalid examples; expected outcomes live in `data/sample/expected_summary.json`, separate from source data.
 
 Limitations: one source file per run; the customer reference keys fit in memory; no cross-file dedupe, currency conversion, or update/event-history semantics; output CSV is not partitioned. The local design uses only Python's standard library at runtime and pytest for tests.
+
 
 
