@@ -74,7 +74,7 @@ The included generator uses a fixed seed and creates dates in shuffled order; am
 
 ## Tests and limitations
 
-Tests cover normal output, empty input, malformed JSONL, missing schema, additive schema fields, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, deterministic generation, reference-file changes, and failure/retry behavior. The sample contains labeled invalid examples; tests reconcile actual results to `data/sample/expected_summary.json`, which is separate from source data.
+Tests cover normal output, empty input, malformed JSONL, missing schema, additive schema fields, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, out-of-order timestamps, deterministic generation, reference-file changes, and failure/retry behavior. The sample contains labeled invalid examples; tests reconcile actual results to `data/sample/expected_summary.json`, which is separate from source data.
 
 Limitations: one source file per run; the customer reference keys fit in memory; no cross-file dedupe, currency conversion, or update/event-history semantics; output CSV is not partitioned. The local design uses only Python's standard library at runtime and pytest for tests.
 
