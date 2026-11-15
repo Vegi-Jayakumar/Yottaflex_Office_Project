@@ -33,6 +33,19 @@ def test_empty_input(tmp_path):
     result=run_pipeline(PipelineConfig(source,customers,tmp_path/"out"))
     assert result["input_rows"] == result["output_rows"] == 0
 
+def test_out_of_order_timestamps_are_kept_in_source_order(tmp_path):
+    customers=tmp_path/"c.csv"; write_customers(customers)
+    source=tmp_path/"late_orders.csv"
+    source.write_text("order_id,customer_id,order_ts,amount,currency,status\n"
+                      "O-LATE,C1,2025-01-03T00:00:00Z,2,USD,paid\n"
+                      "O-EARLY,C2,2025-01-01T00:00:00Z,3,USD,created\n", encoding="utf-8")
+    result=run_pipeline(PipelineConfig(source,customers,tmp_path/"out"))
+    with (tmp_path/"out"/result["run_id"] / "orders.csv").open(newline="") as f:
+        rows=list(csv.DictReader(f))
+    assert result["output_rows"] == 2 and result["rejected_rows"] == 0
+    assert [row["order_id"] for row in rows] == ["O-LATE", "O-EARLY"]
+    assert rows[0]["order_ts"] > rows[1]["order_ts"]
+
 def test_rejects_duplicates_null_fk_and_domain_edges(tmp_path):
     customers=tmp_path/"c.csv"; write_customers(customers)
     source=tmp_path/"rows.csv"
