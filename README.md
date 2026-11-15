@@ -53,21 +53,9 @@ The customer dimension is loaded into a Python set for fast referential checks a
 - **ISO-8601 timestamps:** Input `order_ts` values must include a timezone. The output normalizes them to UTC in ISO-8601 format with a trailing `Z`. Operational `started_at` and `ended_at` report fields use ISO-8601 UTC timestamps.
 - **Lineage fields:** Published order rows include `run_id` and `source_file` so records can be traced to their processing run and input file. `source_row` records the source record position. The run report also includes `run_id` and `source_file`; each reject includes `source_file` and `source_row`.
 
-## Data model and dictionary
+## Data model
 
-Grain: one order per `order_id`; `customer_id` references `customers.csv`. Order IDs are unique within a source file. Event history is outside this example's scope; this is an order snapshot feed.
-
-| Field | Type / nullability | Rule |
-|---|---|---|
-| order_id | string, required | Stable source key; duplicate within batch rejected |
-| customer_id | string, required | Must exist in customer dimension |
-| order_ts | ISO-8601 timestamp, required | Must include timezone; normalized to UTC with `Z` |
-| amount | decimal(… ,2), required | Finite, nonnegative; rounded to two decimal places |
-| currency | string, required | USD, EUR, GBP, or INR; uppercased |
-| status | string, required | created, paid, shipped, or cancelled; lowercased |
-| source_file | string, output | Input basename for lineage |
-| source_row | integer-like string, output | Source record row/line number |
-
+The pipeline’s grain is one order per `order_id`; `customer_id` references the customer dimension. Order IDs are unique within one source file. This example treats input as an order snapshot; event history is outside scope. See [data.md](data.md) for the field-level data dictionary and lineage definitions.
 Unexpected extra fields are tolerated for forward compatibility; missing required columns/keys are quarantined (CSV headers missing fields produce schema rejects for each data row). Unknown currencies, missing values, invalid dates, timezone-free timestamps, negative amounts, unknown customers, and duplicate orders are rejected.
 
 ## Idempotency, restart, and backfill
@@ -85,6 +73,8 @@ The included generator uses a fixed seed and creates dates in shuffled order; am
 Tests cover normal output, empty input, malformed JSONL, missing schema, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, and deterministic generation. The sample contains labeled invalid examples; expected outcomes live in `data/sample/expected_summary.json`, separate from source data.
 
 Limitations: one source file per run; the customer reference keys fit in memory; no cross-file dedupe, currency conversion, or update/event-history semantics; output CSV is not partitioned. The local design uses only Python's standard library at runtime and pytest for tests.
+
+
 
 
 
