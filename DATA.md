@@ -14,7 +14,7 @@ The pipeline reads order records and a customer reference file. Its target grain
 | `status` | string, required | Source and output | Accepted values: created, paid, shipped, cancelled; output is lowercase. |
 | `run_id` | string, output | Pipeline-generated | First 16 lowercase hex characters of a SHA-256 over both input file names and contents (orders and customers). |
 | `source_file` | string, output | Pipeline-generated | Input file basename for lineage. |
-| `source_row` | integer-like string, output | Pipeline-generated | 1-based source record position; CSV header is not counted as a record. |
+| `source_row` | integer-like string, output | Pipeline-generated | Physical source line number; first CSV data row is line 2 because the header occupies line 1; first JSONL record is line 1. |
 
 ## Customer reference
 

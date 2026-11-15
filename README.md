@@ -48,12 +48,12 @@ CSV / JSONL source ──stream──> parse + schema/business validation ──
 customers.csv ──load reference keys───┘
 ```
 
-The customer dimension is loaded into a Python set for fast referential checks and is expected to be modest in size. For larger dimensions, replace this with a SQLite/warehouse lookup. The full order input and duplicate-key index are never held in memory. Each reject includes source filename, 1-based source row (CSV starts at header+1), raw record when parseable, and a reason. A fatal processing failure writes `<run_id>.failure.json` and leaves the prior published result in place.
+The customer dimension is loaded into a Python set for fast referential checks and is expected to be modest in size. For larger dimensions, replace this with a SQLite/warehouse lookup. The full order input and duplicate-key index are never held in memory. Each reject includes source filename, physical source line number (CSV data starts at line 2 after the header; JSONL starts at line 1), raw record when parseable, and a reason. A fatal processing failure writes `<run_id>.failure.json` and leaves the prior published result in place.
 
 ## Naming conventions
 
 - **Stable IDs:** `order_id` is the source-provided, stable order key. `run_id` is deterministic: the first 16 lowercase hexadecimal characters of a SHA-256 over both input file names and contents. The same order and customer files therefore receive the same `run_id`; changing either produces a different ID.
-- **snake_case names:** Files, tables, columns, and report keys use lowercase `snake_case`. The logical target table is named `orders`; its CSV representation is `orders.csv`. Reject details are stored in `rejects.jsonl`.
+- **snake_case names:** Pipeline data files, logical tables, columns, and report keys use lowercase `snake_case`. The logical target table is named `orders`; its CSV representation is `orders.csv`. Reject details are stored in `rejects.jsonl`.
 - **ISO-8601 timestamps:** Input `order_ts` values must include a timezone. The output normalizes them to UTC in ISO-8601 format with a trailing `Z`. Operational `started_at` and `ended_at` report fields use ISO-8601 UTC timestamps.
 - **Lineage fields:** Published order rows include `run_id` and `source_file` so records can be traced to their processing run and input file. `source_row` records the source record position. The run report also includes `run_id` and `source_file`; each reject includes `source_file` and `source_row`.
 
