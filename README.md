@@ -36,6 +36,13 @@ customers.csv ──load reference keys───┘
 
 The customer dimension is loaded into a Python set for fast referential checks and is expected to be modest in size. For larger dimensions, replace this with a SQLite/warehouse lookup. The full order input and duplicate-key index are never held in memory. Each reject includes source filename, 1-based source row (CSV starts at header+1), raw record when parseable, and a reason. A fatal processing failure writes `<run_id>.failure.json` and leaves the prior published result in place.
 
+## Naming conventions
+
+- **Stable IDs:** `order_id` is the source-provided, stable order key. `run_id` is deterministic: the first 16 lowercase hexadecimal characters of the source file SHA-256. Identical input content therefore receives the same `run_id`.
+- **snake_case names:** Files, tables, columns, and report keys use lowercase `snake_case`. The logical target table is named `orders`; its CSV representation is `orders.csv`. Reject details are stored in `rejects.jsonl`.
+- **ISO-8601 timestamps:** Input `order_ts` values must include a timezone. The output normalizes them to UTC in ISO-8601 format with a trailing `Z`. Operational `started_at` and `ended_at` report fields use ISO-8601 UTC timestamps.
+- **Lineage fields:** Published order rows include `run_id` and `source_file` so records can be traced to their processing run and input file. `source_row` records the source record position. The run report also includes `run_id` and `source_file`; each reject includes `source_file` and `source_row`.
+
 ## Data model and dictionary
 
 Grain: one order per `order_id`; `customer_id` references `customers.csv`. Order IDs are unique within a source file. Event history is outside this example's scope; this is an order snapshot feed.
@@ -68,4 +75,5 @@ The included generator uses a fixed seed and creates dates in shuffled order; am
 Tests cover normal output, empty input, malformed JSONL, missing schema, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, and deterministic generation. The sample contains labeled invalid examples; expected outcomes live in `data/sample/expected_summary.json`, separate from source data.
 
 Limitations: one source file per run; the customer reference keys fit in memory; no cross-file dedupe, currency conversion, or update/event-history semantics; output CSV is not partitioned. The local design uses only Python's standard library at runtime and pytest for tests.
+
 
