@@ -2,6 +2,16 @@
 
 A small, dependency-free Python project that ingests large order CSV or JSONL files without materializing the input in memory. It validates records, normalizes output, quarantines rejects with source row lineage, and publishes a deterministic result folder.
 
+## Tech stack
+
+- **Language and runtime:** Python 3.10 or newer.
+- **Runtime dependencies:** Python standard library only. The pipeline uses `csv` and `json` for streaming input/output, `sqlite3` for disk-backed duplicate-key tracking, and standard modules for hashing, timestamps, decimal arithmetic, and filesystem operations.
+- **Input formats:** CSV and newline-delimited JSON (`.jsonl` / `.ndjson`).
+- **Output formats:** normalized CSV, JSONL quarantine records, and a JSON run report.
+- **Packaging and CLI:** `pyproject.toml` with setuptools; run with `python -m pipeline.cli` or the installed `orders-pipeline` command.
+- **Testing:** pytest, installed with the optional `test` dependency group.
+- **Execution environment:** local filesystem; no database server, cloud account, or external service is required. SQLite is used as a temporary local index and removed after a successful run.
+
 ## Quick start
 
 Requires Python 3.10+. From this directory:
