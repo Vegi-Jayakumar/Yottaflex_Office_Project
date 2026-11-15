@@ -35,6 +35,10 @@ python -m pipeline.cli --input data/generated/orders.csv --customers data/genera
 
 JSONL inputs contain one JSON object per line with the same field names. CSV and JSONL are streamed one record at a time. `chunk_size` sets the transaction commit interval for the on-disk duplicate index and is recorded in the report; processing does not retain a batch of source records. Duplicate-key tracking uses a temporary SQLite index on disk.
 
+## Design document
+
+See [design.md](DESIGN.md) for design choices, trade-offs, and limitations.
+
 ## Architecture and behavior
 
 ```text
@@ -73,6 +77,7 @@ The included generator uses a fixed seed and creates dates in shuffled order; am
 Tests cover normal output, empty input, malformed JSONL, missing schema, duplicate key, missing required data, unknown reference, negative amount, zero amount, invalid status, timezone-free timestamp, and deterministic generation. The sample contains labeled invalid examples; expected outcomes live in `data/sample/expected_summary.json`, separate from source data.
 
 Limitations: one source file per run; the customer reference keys fit in memory; no cross-file dedupe, currency conversion, or update/event-history semantics; output CSV is not partitioned. The local design uses only Python's standard library at runtime and pytest for tests.
+
 
 
 
