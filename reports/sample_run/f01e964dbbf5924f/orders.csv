@@ -1,4 +1,0 @@
-order_id,customer_id,order_ts,amount,currency,status,run_id,source_file,source_row
-O-100,C-001,2025-01-01T10:30:00Z,0.00,USD,created,f01e964dbbf5924f,orders.csv,2
-O-101,C-002,2025-01-03T10:00:00Z,125.50,EUR,paid,f01e964dbbf5924f,orders.csv,3
-O-102,C-001,2025-01-02T09:15:00Z,19.99,GBP,shipped,f01e964dbbf5924f,orders.csv,4
