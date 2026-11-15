@@ -1,0 +1,5 @@
+# Design and trade-offs
+
+The vertical slice uses Python iterators rather than a dataframe so input size does not determine source-row memory use. A temporary SQLite primary-key table handles deduplication on disk, avoiding an unbounded in-memory key set. The customer reference set remains in memory for simplicity, so very large dimensions should move to a database lookup. Publishing uses a sibling staging directory and atomic rename; deterministic content hashing makes retries idempotent. Rejects preserve source row and raw values where parsing succeeded. CSV and newline-delimited JSON are supported because both permit record-at-a-time reads; a single large JSON array is intentionally not supported.
+
+Output is one normalized CSV plus line-delimited reject JSON and a JSON operational report. This is easy to inspect locally and can be replaced by object storage or a warehouse sink later. The pipeline rejects unsupported currency/status and timezone-free timestamps rather than silently guessing. It permits out-of-order business timestamps because the feed is a snapshot, and it does not overwrite records across different source files.

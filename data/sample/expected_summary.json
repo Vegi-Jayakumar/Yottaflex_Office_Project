@@ -1,0 +1,13 @@
+{
+  "expected_input_rows": 8,
+  "expected_output_rows": 3,
+  "expected_rejected_rows": 5,
+  "expected_reject_reasons": {
+    "duplicate_order_id": 1,
+    "unknown_customer": 1,
+    "negative_amount": 1,
+    "invalid_status": 1,
+    "missing_required:customer_id": 1
+  },
+  "expected_amount_totals_by_currency": {"EUR": "125.50", "GBP": "19.99", "USD": "0.00"}
+}
