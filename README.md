@@ -59,7 +59,7 @@ The customer dimension is loaded into a Python set for fast referential checks a
 
 ## Data model
 
-The pipeline’s grain is one order per `order_id`; `customer_id` references the customer dimension. Order IDs are unique within one source file. This example treats input as an order snapshot; event history is outside scope. See [data.md](data.md) for the field-level data dictionary and lineage definitions.
+The pipeline’s grain is one order per `order_id`; `customer_id` references the customer dimension. Order IDs are unique within one source file. This example treats input as an order snapshot; event history is outside scope. See [data.md](DATA.md) for the field-level data dictionary and lineage definitions.
 Unexpected extra fields are tolerated for forward compatibility and listed in the run report's `unexpected_fields` field. Missing required columns/keys are quarantined (CSV headers missing fields produce schema rejects for each data row). Unknown currencies, missing values, invalid dates, timezone-free timestamps, negative amounts, unknown customers, and duplicate orders are rejected.
 
 ## Idempotency, restart, and backfill
