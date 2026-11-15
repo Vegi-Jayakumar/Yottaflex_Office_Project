@@ -74,20 +74,42 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1024 * 1024), b""): digest.update(block)
     return digest.hexdigest()
 
+def _run_id(source: Path, customers_path: Path) -> str:
+    """Derive a stable run key from both data inputs, including the reference dimension."""
+    digest = hashlib.sha256()
+    for label, path in ((b"source\0", source), (b"customers\0", customers_path)):
+        digest.update(label)
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        with path.open("rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(block)
+    return digest.hexdigest()[:16]
+
 def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
     source, customers_path, output = Path(config.input_path), Path(config.customers_path), Path(config.output_dir)
     if config.chunk_size <= 0: raise ValueError("chunk_size must be positive")
     customers = _load_customers(customers_path)
-    run_id = _sha256(source)[:16]
+    run_id = _run_id(source, customers_path)
     started, timer = datetime.now(timezone.utc), time.perf_counter()
     output.mkdir(parents=True, exist_ok=True)
     final_dir = output / run_id
+    backup_dir = output / f".{run_id}.previous"
+    if backup_dir.exists():
+        if final_dir.exists():
+            shutil.rmtree(backup_dir)
+        else:
+            os.replace(backup_dir, final_dir)
     staging = Path(tempfile.mkdtemp(prefix=f".{run_id}.", dir=output))
     counts, status_counts, amount_totals = Counter(input_rows=0, parsed_rows=0, output_rows=0, rejected_rows=0), Counter(), Counter()
+    db = None
+    unexpected_fields: set[str] = set()
     try:
         # SQLite keeps duplicate-key state on disk, so memory does not grow with input row count.
         db = sqlite3.connect(staging / "seen.sqlite")
         db.execute("CREATE TABLE seen (order_id TEXT PRIMARY KEY)")
+        db.execute("CREATE TABLE published (order_id TEXT PRIMARY KEY)")
+        db.execute("CREATE TABLE source_rows (source_row INTEGER PRIMARY KEY)")
         with (staging / "orders.csv").open("w", newline="", encoding="utf-8") as valid_file, (staging / "rejects.jsonl").open("w", encoding="utf-8") as reject_file:
             writer = csv.DictWriter(valid_file, fieldnames=OUTPUT_FIELDS); writer.writeheader()
             for row_num, raw, parse_error in _iter_records(source):
@@ -97,6 +119,10 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                     _write_reject(reject_file, source, row_num, None, parse_error); counts["rejected_rows"] += 1; continue
                 assert raw is not None
                 counts["parsed_rows"] += 1
+                unexpected_fields.update(
+                    key if isinstance(key, str) and key else "<extra_values>"
+                    for key in (set(raw) - REQUIRED)
+                )
                 normalized, error = _normalize(raw, customers)
                 if not error and normalized:
                     try: db.execute("INSERT INTO seen VALUES (?)", (normalized["order_id"],))
@@ -107,20 +133,35 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
                 counts["output_rows"] += 1; status_counts[normalized["status"]] += 1
                 amount_totals[normalized["currency"]] += Decimal(normalized["amount"])
         db.commit()
-        reconciliation = _reconcile_output(staging / "orders.csv", db, counts, status_counts, amount_totals, run_id, source.name)
+        reconciliation = _reconcile_output(staging / "orders.csv", staging / "rejects.jsonl", db,
+                                            counts, status_counts, amount_totals, run_id, source.name)
         db.close()
+        db = None
         # SQLite is an internal scratch index, not part of the published dataset.
         (staging / "seen.sqlite").unlink(missing_ok=True)
         ended = datetime.now(timezone.utc)
-        report = {"run_id": run_id, "status": "success", "source_file": source.name, "input_sha256": _sha256(source),
+        report = {"run_id": run_id, "status": "success", "source_file": source.name,
+          "input_sha256": _sha256(source), "customers_sha256": _sha256(customers_path),
           "started_at": started.isoformat(), "ended_at": ended.isoformat(), "duration_seconds": round(time.perf_counter()-timer, 6),
           "chunk_size": config.chunk_size, **dict(counts), "distinct_customers_loaded": len(customers),
-          "status_counts": dict(sorted(status_counts.items())), "amount_totals_by_currency": {k:f"{v:.2f}" for k,v in sorted(amount_totals.items())}, "reconciliation": reconciliation, "failure_reason": None}
+          "status_counts": dict(sorted(status_counts.items())), "amount_totals_by_currency": {k:f"{v:.2f}" for k,v in sorted(amount_totals.items())},
+          "unexpected_fields": sorted(unexpected_fields), "reconciliation": reconciliation, "failure_reason": None}
         (staging / "run_report.json").write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8")
-        if final_dir.exists(): shutil.rmtree(final_dir)
-        os.replace(staging, final_dir)
+        if final_dir.exists():
+            os.replace(final_dir, backup_dir)
+        try:
+            os.replace(staging, final_dir)
+        except Exception:
+            if backup_dir.exists() and not final_dir.exists():
+                os.replace(backup_dir, final_dir)
+            raise
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        (output / f"{run_id}.failure.json").unlink(missing_ok=True)
         return report
     except Exception as exc:
+        if db is not None:
+            db.close()
         failure = {"run_id":run_id,"status":"failed","source_file":source.name,"started_at":started.isoformat(),"ended_at":datetime.now(timezone.utc).isoformat(),"duration_seconds":round(time.perf_counter()-timer,6),**dict(counts),"failure_reason":str(exc)}
         (output/f"{run_id}.failure.json").write_text(json.dumps(failure,indent=2)+"\n",encoding="utf-8")
         raise
@@ -128,33 +169,56 @@ def run_pipeline(config: PipelineConfig) -> dict[str, Any]:
         if staging.exists(): shutil.rmtree(staging, ignore_errors=True)
 
 
-def _reconcile_output(path: Path, db: sqlite3.Connection, counts: Counter, expected_status: Counter,
-                      expected_amounts: Counter, run_id: str, source_file: str) -> dict[str, Any]:
-    """Read the staged target back incrementally and verify counts, keys, lineage, and aggregates."""
+def _reconcile_output(path: Path, rejects_path: Path, db: sqlite3.Connection, counts: Counter,
+                      expected_status: Counter, expected_amounts: Counter,
+                      run_id: str, source_file: str) -> dict[str, Any]:
+    """Read staged outputs back incrementally and verify counts, keys, lineage, and aggregates."""
     actual_count = 0
     status_counts: Counter = Counter()
     amount_totals: Counter = Counter()
-    previous_order_id = None
     with path.open("r", newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             actual_count += 1
             if row["run_id"] != run_id or row["source_file"] != source_file:
                 raise RuntimeError("output lineage reconciliation failed")
+            try:
+                db.execute("INSERT INTO published VALUES (?)", (row["order_id"],))
+                db.execute("INSERT INTO source_rows VALUES (?)", (int(row["source_row"]),))
+            except (sqlite3.IntegrityError, ValueError) as exc:
+                raise RuntimeError("output key or source-row uniqueness reconciliation failed") from exc
             status_counts[row["status"]] += 1
             amount_totals[row["currency"]] += Decimal(row["amount"])
+    reject_count = 0
+    with rejects_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                reject = json.loads(line)
+                if reject["source_file"] != source_file or not reject["reason"]:
+                    raise ValueError("reject lineage or reason is missing")
+                db.execute("INSERT INTO source_rows VALUES (?)", (int(reject["source_row"]),))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError, sqlite3.IntegrityError) as exc:
+                raise RuntimeError("reject count or source-row reconciliation failed") from exc
+            reject_count += 1
     unique_key_count = db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
+    published_key_count = db.execute("SELECT COUNT(*) FROM published").fetchone()[0]
+    matched_key_count = db.execute("SELECT COUNT(*) FROM seen s JOIN published p USING (order_id)").fetchone()[0]
+    source_row_count = db.execute("SELECT COUNT(*) FROM source_rows").fetchone()[0]
     expected_totals = {key: f"{value:.2f}" for key, value in sorted(expected_amounts.items())}
     actual_totals = {key: f"{value:.2f}" for key, value in sorted(amount_totals.items())}
     if counts["input_rows"] != counts["output_rows"] + counts["rejected_rows"]:
         raise RuntimeError("source-to-target count reconciliation failed")
-    if actual_count != counts["output_rows"] or unique_key_count != actual_count:
+    if (actual_count != counts["output_rows"] or unique_key_count != actual_count or
+            published_key_count != actual_count or matched_key_count != actual_count):
         raise RuntimeError("output row count or primary-key reconciliation failed")
+    if reject_count != counts["rejected_rows"] or source_row_count != counts["input_rows"]:
+        raise RuntimeError("reject count or source-row reconciliation failed")
     if dict(sorted(status_counts.items())) != dict(sorted(expected_status.items())):
         raise RuntimeError("status aggregate reconciliation failed")
     if actual_totals != expected_totals:
         raise RuntimeError("amount aggregate reconciliation failed")
     return {"status": "passed", "input_equals_output_plus_rejects": True,
             "published_rows_match_report": True, "published_keys_unique": True,
+            "reject_rows_match_report": True, "all_source_rows_accounted_for": True,
             "status_counts_match": True, "amount_totals_match": True,
             "published_rows_checked": actual_count}
 def _write_reject(file, source: Path, row_num: int, raw: Mapping[str, Any] | None, reason: str) -> None:
